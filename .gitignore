@@ -9,6 +9,12 @@ Thumbs.db
 
 bin/
 
+# Visual Studio cache and index files
+.vs/
+
+# bzr client project (reference only, not part of AC2D)
+bzr/
+
 # Precached DAT files by AC2D
 *.pre
 *.aps
