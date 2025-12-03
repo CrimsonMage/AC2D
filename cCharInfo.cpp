@@ -258,15 +258,19 @@ void cCharInfo::LoadStatsTable()
 		"Measures your character's willpower."
 	};
 
-	stStatInfo SI;
-	memset( &SI, 0, sizeof( SI ) );
-
 	for (int i=1; i<=6; i++)
 	{
+		stStatInfo SI;
+		// Don't use memset on structs with std::string - it corrupts the string objects
 		SI.dwID = i;
 		SI.dwIcon = dwIcons[i-1];
 		SI.szDescription = szDescs[i-1];
 		SI.szName = szNames[i-1];
+		SI.dwInc = 0;
+		SI.dwInitial = 0;
+		SI.dwXP = 0;
+		SI.dwBase = 0;
+		SI.dwBuffed = 0;
 
 		m_mStat[SI.dwID] = SI;
 	}
@@ -300,17 +304,22 @@ void cCharInfo::LoadSecStatsTable()
 		1
 	};
 
-	stSecStatInfo SI;
-	memset( &SI, 0, sizeof( SI ) );
-
 	for (int i=2; i<=6; i+=2)
 	{
+		stSecStatInfo SI;
+		// Don't use memset on structs with std::string - it corrupts the string objects
 		SI.dwID = i;
 		SI.dwIcon = dwIcons[(i >> 1) - 1];
 		SI.szDescription = szDescs[(i >> 1) - 1];
 		SI.szName = szNames[(i >> 1) - 1];
 		SI.dwAttrib = aiAttribs[(i >> 1) - 1];
 		SI.dwAttribDivisor = dwDivisors[(i >> 1) - 1];
+		SI.dwInc = 0;
+		SI.dwUnknown = 0;
+		SI.dwXP = 0;
+		SI.dwBase = 0;
+		SI.dwCurrent = 0;
+		SI.dwBuffed = 0;
 
 		m_mSecStat[SI.dwID] = SI;
 	}
@@ -445,17 +454,40 @@ void cCharInfo::ParseLogin(cMessage *Msg)
 
 		for (int i=1;i<=6;i++)
 		{
-			m_mStat[i].dwInc = Msg->ReadDWORD();
-			m_mStat[i].dwInitial = Msg->ReadDWORD();
-			m_mStat[i].dwXP = Msg->ReadDWORD();
+			// Only update numeric fields, preserve stat names and descriptions loaded from table
+			if (m_mStat.find(i) != m_mStat.end())
+			{
+				m_mStat[i].dwInc = Msg->ReadDWORD();
+				m_mStat[i].dwInitial = Msg->ReadDWORD();
+				m_mStat[i].dwXP = Msg->ReadDWORD();
+			}
+			else
+			{
+				// Skip if stat doesn't exist (shouldn't happen, but be safe)
+				Msg->ReadDWORD();
+				Msg->ReadDWORD();
+				Msg->ReadDWORD();
+			}
 		}
 
 		for (int i=2;i<=6;i+=2)
 		{
-			m_mSecStat[i].dwInc = Msg->ReadDWORD();
-			m_mSecStat[i].dwUnknown = Msg->ReadDWORD();
-			m_mSecStat[i].dwXP = Msg->ReadDWORD();
-			m_mSecStat[i].dwCurrent = Msg->ReadDWORD();
+			// Only update numeric fields, preserve stat names and descriptions loaded from table
+			if (m_mSecStat.find(i) != m_mSecStat.end())
+			{
+				m_mSecStat[i].dwInc = Msg->ReadDWORD();
+				m_mSecStat[i].dwUnknown = Msg->ReadDWORD();
+				m_mSecStat[i].dwXP = Msg->ReadDWORD();
+				m_mSecStat[i].dwCurrent = Msg->ReadDWORD();
+			}
+			else
+			{
+				// Skip if stat doesn't exist (shouldn't happen, but be safe)
+				Msg->ReadDWORD();
+				Msg->ReadDWORD();
+				Msg->ReadDWORD();
+				Msg->ReadDWORD();
+			}
 		}
 	}
 	if (flags2 & 0x00000002)

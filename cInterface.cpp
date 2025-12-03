@@ -606,6 +606,11 @@ void cInterface::SetInterfaceMode(eInterfaceMode Mode)
 		m_mwWindowToolbar->SetVisible(true);
 //		m_mwSpellBar->SetVisible(true);
 
+		// Reset camera to defaults when entering world
+		m_fCamDist = 0.018f;
+		m_fCamRotX = 0;
+		m_fCamRotY = (float) M_PI/3;
+
 		m_WindowManager->SetFocusedWindow(this);
 		break;
 	}
@@ -626,12 +631,11 @@ void cInterface::SetCharList(stCharList *CharList)
 			char szCharName[64];
 			sprintf(szCharName, "+%s", m_CharList.Chars[i].Name);
 			m_stCharList[i]->SetText(szCharName);
-			m_stCharList[i]->SetTextColor(0xFFFFFF);
+			m_stCharList[i]->SetTextColor(0xFFFFFF);  // All text stays white
 		}
 		
-		// Select first character and highlight it
+		// Select first character - bar will highlight it (no text color change)
 		m_dwSelChar = m_CharList.Chars[0].GUID;
-		m_stCharList[0]->SetTextColor(0x0000FF);  // Blue for selected
 		m_picSelChar->JumpToBack();
 		m_picSelChar->SetPosition(m_stCharList[0]->GetLeft(), m_stCharList[0]->GetTop());
 	}
@@ -991,13 +995,8 @@ bool cInterface::OnMouseDown( IWindow & Window, float X, float Y, unsigned long 
 				m_picSelChar->SetPosition(m_stCharList[i]->GetLeft(), m_stCharList[i]->GetTop());
 				m_dwSelChar = m_CharList.Chars[i].GUID;
 				
-				// Character selection - only update text colors, not models
-				// Models are not loaded at login screen
-				for (int h=0;h<m_CharList.CharCount;h++)
-				{
-					m_stCharList[h]->SetTextColor(0xFFFFFF);
-				}
-				m_stCharList[i]->SetTextColor(0x0000FF);
+				// Character selection - bar highlights the selected character
+				// All text stays white (no color change)
 				// NOTE: Character model animations disabled - models not loaded at login
 			}
 		}
@@ -1776,13 +1775,9 @@ bool cInterface::OnRender( IWindow & Window, double TimeSlice )
 				char szCharName[64];
 				sprintf(szCharName, "+%s", m_CharList.Chars[i].Name);
 				m_stCharList[i]->SetText(szCharName);
-				m_stCharList[i]->SetTextColor(0xFFFFFF);
+				m_stCharList[i]->SetTextColor(0xFFFFFF);  // All text stays white
 			}
-			// Highlight first character
-			if (m_CharList.CharCount > 0)
-			{
-				m_stCharList[0]->SetTextColor(0x0000FF);
-			}
+			// Bar highlights the selected character (no text color change needed)
 
 			// NOTE: Character models are NOT loaded at login screen
 			// They will be created when entering world via 0xF745 (create object) messages
