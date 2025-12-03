@@ -2,6 +2,7 @@
 #include "cNetwork.h"
 
 //-a teqilla -h 74.201.102.233:9000
+// Test server: -a <account> -h 72.239.39.50:9000 -v <password>
 
 bool SockCompare(SOCKADDR_IN *a, SOCKADDR_IN *b);
 
@@ -165,12 +166,16 @@ void cNetwork::Reset()
 	m_siLoginServer.m_wLogicalID = 0;
 	m_siLoginServer.m_wTable = 0;
 	m_siLoginServer.m_dwFlags = 0;
+	m_siLoginServer.m_eState = kSessionLogon;  // Start in logon state
+	m_siLoginServer.m_dwServerLeadingSequence = 0;
+	m_siLoginServer.m_dwClientLeadingSequence = 0;
 	m_siLoginServer.m_dwLastPing = GetTickCount();
 	m_siLoginServer.m_dwLastSyncSent = 0;
 	m_siLoginServer.m_dwRecvSequence = 0;
     m_siLoginServer.m_dwLastPacketAck = GetTickCount();
 	m_siLoginServer.m_dwLastPacketSent = GetTickCount();
 	m_siLoginServer.m_dwLastConnectAttempt = GetTickCount();
+	m_siLoginServer.m_dwLastHeartbeat = GetTickCount();  // Initialize heartbeat timer
 
 	//Now the world servers..
 	for (std::list<stServerInfo>::iterator i = m_siWorldServers.begin(); i != m_siWorldServers.end(); i++)
@@ -640,7 +645,7 @@ void cNetwork::Run()
 	while (!m_bQuit)
 	{
 		//keep trying to connect to login server if first time doesn't work
-		if (!(m_siLoginServer.m_dwFlags & SF_CONNECTED))
+		if (m_siLoginServer.m_eState == kSessionLogon || m_siLoginServer.m_eState == kSessionReferred)
 		{
 			// timeout trying to connect
 			if ((m_siLoginServer.m_dwLastConnectAttempt + TIMEOUT_MS) < GetTickCount())
@@ -706,6 +711,18 @@ void cNetwork::Run()
 		}
 
 		CheckPings();
+		
+		// Send periodic heartbeat to prevent disconnection, especially on login screen
+		// This keeps the connection alive even when no game packets are being exchanged
+		if (m_siLoginServer.m_dwFlags & SF_CONNECTED)
+		{
+			if (m_siLoginServer.m_dwLastHeartbeat + HEARTBEAT_INTERVAL_MS < GetTickCount())
+			{
+				// Send a heartbeat (ack packet) to keep connection alive
+				SendAckPacket(&m_siLoginServer);
+				m_siLoginServer.m_dwLastHeartbeat = GetTickCount();
+			}
+		}
 	}
 }
 
@@ -773,11 +790,61 @@ void cNetwork::ProcessPacket(cPacket *Packet, stServerInfo *Server)
 //	Lock();
 
 	stTransitHeader *Head = (stTransitHeader *) Packet->GetData();
+	
+	// Validate packet size
+	if (Packet->GetLength() < (int)sizeof(stTransitHeader))
+	{
+		m_Interface->OutputConsoleString("Dropping packet smaller than header (size: %d)", Packet->GetLength());
+		delete Packet;
+		return;
+	}
+	
+	if (Packet->GetLength() != (int)(sizeof(stTransitHeader) + Head->m_wSize))
+	{
+		m_Interface->OutputConsoleString("Dropping packet with bad size in header (expected: %d, got: %d)", 
+			sizeof(stTransitHeader) + Head->m_wSize, Packet->GetLength());
+		delete Packet;
+		return;
+	}
+	
 	BYTE *Data = Packet->GetData() + sizeof(stTransitHeader);
 
     cByteStream stream(Data, Head->m_wSize);
 
 	DWORD dwFlags = Head->m_dwFlags;
+	
+	// Validate checksum if we have CRC seeds AND packet has encrypted checksum flag
+	// Only validate encrypted checksums - some packets don't use them
+	if ((Server->m_dwFlags & SF_CRCSEEDS) && (Head->m_dwFlags & kEncryptedChecksum))
+	{
+		DWORD calcChecksum = checksumPacket(Packet, Server->serverXorGen);
+		if (Head->m_dwCRC != calcChecksum)
+		{
+			// Check if XOR generator might be out of sync (sequence too far ahead/behind)
+			DWORD xorVal = Server->serverXorGen->get(Head->m_dwSequence);
+			if (xorVal == 0 && Head->m_dwSequence > 0)
+			{
+				// XOR generator returned 0 - sequence might be out of cache range
+				m_Interface->OutputConsoleString("WARNING: Checksum mismatch - XOR generator may be out of sync (seq: %d, recvSeq: %d)", 
+					Head->m_dwSequence, Server->m_dwRecvSequence);
+				// Don't drop - might be a sync issue, let it through for now
+			}
+			else
+			{
+				m_Interface->OutputConsoleString("Dropping packet with bad checksum (calc: %08X, packet: %08X, seq: %d, xor: %08X)", 
+					calcChecksum, Head->m_dwCRC, Head->m_dwSequence, xorVal);
+				delete Packet;
+				return;
+			}
+		}
+	}
+	else if ((Head->m_dwFlags & kEncryptedChecksum) && !(Server->m_dwFlags & SF_CRCSEEDS))
+	{
+		// Packet has encrypted checksum but we don't have seeds yet - this is OK during initial handshake
+		// Don't drop, just log a warning
+		m_Interface->OutputConsoleString("WARNING: Received encrypted checksum packet but no CRC seeds yet (seq: %d)", 
+			Head->m_dwSequence);
+	}
 
     if (dwFlags & kServerSwitch) {
         // server ID?
@@ -807,7 +874,12 @@ void cNetwork::ProcessPacket(cPacket *Packet, stServerInfo *Server)
 
     if (dwFlags & kEncryptedChecksum)
     {
-        //TODO: Check the checksum
+        // Checksum already validated above if we have CRC seeds
+        // If we don't have seeds yet, we can't validate encrypted checksums
+        if (!(Server->m_dwFlags & SF_CRCSEEDS))
+        {
+            m_Interface->OutputConsoleString("WARNING: Received encrypted checksum packet but no CRC seeds yet");
+        }
         dwFlags &= ~kEncryptedChecksum;
     }
 
@@ -819,22 +891,37 @@ void cNetwork::ProcessPacket(cPacket *Packet, stServerInfo *Server)
         dwFlags &= ~kAckSequence;
     }
     else {
-        // update sequence number only if not an ack
-        // XXX: are there other cases we should not update sequence number?
-        // XXX: are there cases where we should update even if it's just an ack?
-        if (Head->m_dwSequence != Server->m_dwRecvSequence + 1) {
-            Server->m_dwRecvSequence += 1;
-        }
-        else {
-            if (Head->m_dwSequence <= Server->m_dwRecvSequence && Head->m_dwSequence != 0) {
-                // we already received this packet
-                m_Interface->OutputConsoleString("Received packet #%d again", Head->m_dwSequence);
+        // Better sequence number tracking (inspired by bzr)
+        // Only process sequence numbers if we're connected
+        if (Server->m_eState == kSessionConnected)
+        {
+            // Check if we've already received this packet
+            if (Head->m_dwSequence != 0 && Head->m_dwSequence <= Server->m_dwRecvSequence)
+            {
+                // Duplicate packet - already processed
+                m_Interface->OutputConsoleString("Received duplicate packet #%d (already have up to #%d)", 
+                    Head->m_dwSequence, Server->m_dwRecvSequence);
+                delete Packet;
+                return;
             }
-            else if (Head->m_dwSequence > Server->m_dwRecvSequence + 1) {
-                // we missed a packet
-                // TODO: handle out of order packet by storing it and playing back later when we get the preceding packet
-                m_Interface->OutputConsoleString("Received out of order packet with id #%d", Head->m_dwSequence);
+            
+            // Update leading sequence (latest we've seen, even if out of order)
+            if (Head->m_dwSequence > Server->m_dwServerLeadingSequence)
+            {
+                Server->m_dwServerLeadingSequence = Head->m_dwSequence;
+            }
+            
+            // Update received sequence if this is the next expected packet
+            if (Head->m_dwSequence == Server->m_dwRecvSequence + 1)
+            {
                 Server->m_dwRecvSequence = Head->m_dwSequence;
+            }
+            else if (Head->m_dwSequence > Server->m_dwRecvSequence + 1)
+            {
+                // Out of order packet - we missed some
+                m_Interface->OutputConsoleString("Received out of order packet #%d (expected #%d)", 
+                    Head->m_dwSequence, Server->m_dwRecvSequence + 1);
+                // TODO: Store out-of-order packets and replay when gap is filled
             }
         }
     }
@@ -848,6 +935,11 @@ void cNetwork::ProcessPacket(cPacket *Packet, stServerInfo *Server)
         Server->m_wTable = Head->m_wTable;
         Server->m_dwLastSyncRecv = GetTickCount();
 
+        // Update state machine
+        if (Server->m_eState == kSessionLogon || Server->m_eState == kSessionReferred)
+        {
+            Server->m_eState = kSessionConnectResponse;
+        }
         Server->m_dwFlags |= SF_CONNECTED;
 
         Server->m_flServerTime = stream.ReadDouble(); //Time sync
@@ -875,6 +967,9 @@ void cNetwork::ProcessPacket(cPacket *Packet, stServerInfo *Server)
         SendConnectResponse();
 		m_Interface->SetConnProgress(0.2f);
 
+        // After sending connect response, transition to connected state on next valid packet
+        // (State will be updated when we receive the first blob fragment or game message)
+
         dwFlags &= ~kConnectRequest;
 
 		// login server is world server unless we get a redirect
@@ -901,6 +996,13 @@ void cNetwork::ProcessPacket(cPacket *Packet, stServerInfo *Server)
 
     if (dwFlags & kBlobFragments)
     {
+        // If we're in ConnectResponse state and receiving blob fragments, we're now connected
+        if (Server->m_eState == kSessionConnectResponse)
+        {
+            Server->m_eState = kSessionConnected;
+            m_Interface->OutputConsoleString("Session fully connected - received game data");
+        }
+        
         ProcessFragment(&stream, Server);
 
         dwFlags &= ~kBlobFragments;
@@ -2531,11 +2633,14 @@ void cNetwork::DownloadLandblock(DWORD Landblock)
 }
 
 void cNetwork::SendDDDInterrogationResponse() {
-    //stTransitHeader header;
+    // DDD_InterrogationResponse (0xF7E6) - Response to server's DDD interrogation
+    // Based on bzr implementation and ACEmulator expectations
     cPacket *DDDResponsePacket = new cPacket();
-    //DDDResponsePacket->Add(&header, sizeof(header));
     DDDResponsePacket->Add((DWORD)0xF7E6);
-    //SendLSPacket(DDDResponsePacket, false, false);
+    DDDResponsePacket->Add((DWORD)1);  // clientLanguage (1 = English)
+    DDDResponsePacket->Add((DWORD)0);  // numItersWithKeys
+    DDDResponsePacket->Add((DWORD)0);  // numItersWithoutKeys
+    DDDResponsePacket->Add((DWORD)0);  // flags
     SendWSMessage(DDDResponsePacket, 0x0014); // 0x0014 from pcap
 }
 
@@ -2776,6 +2881,9 @@ stServerInfo * cNetwork::AddWorldServer(SOCKADDR_IN NewServer)
 	tpNewServer.m_wLogicalID = 0;
 	tpNewServer.m_wTable = 0;
 	tpNewServer.m_dwFlags = 0;
+	tpNewServer.m_eState = kSessionLogon;  // New world servers start in logon state
+	tpNewServer.m_dwServerLeadingSequence = 0;
+	tpNewServer.m_dwClientLeadingSequence = 0;
 	tpNewServer.m_dwLastPing = GetTickCount();
 	tpNewServer.m_dwLastSyncSent = 0;
 	tpNewServer.m_dwRecvSequence = 0; // should we start this at 2?

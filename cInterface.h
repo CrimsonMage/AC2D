@@ -169,8 +169,8 @@ private:
 	cModelGroup * m_mgBZ, * m_mgAsh;
 
 	//MOTD screen
-	cPictureBox * m_picEnterGame, * m_picCharList, *m_picCharListTop, * m_picSelChar, *m_picMap;
-	cStaticText * m_stCharList[5], * m_stMOTD;
+	cPictureBox * m_picEnterGame, * m_picCharList, *m_picCharListTop, * m_picSelChar, *m_picMap, * m_picCharSelectBackground;
+	cStaticText * m_stCharList[5], * m_stMOTD, * m_stEnterButton;  // Text overlay for ENTER button
 	cModelGroup * m_mgChars[5], * m_mgPlatforms[5];
 
 	//Texture viewer

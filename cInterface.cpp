@@ -40,6 +40,7 @@ cInterface::cInterface()
 	m_dwCurSelect = 0;
 	m_mgChars[0] = 0;
 	m_mgBZ = 0;
+	m_picCharSelectBackground = NULL;
 
 	m_iRenderRadius = 5;
 
@@ -203,6 +204,17 @@ cInterface::cInterface()
 //	AddChild(*m_picMap);
 //	m_picMap->JumpToFront();
 
+	// Background image for character select screen
+	// Image is loaded from DAT files (client_portal.dat or client_highres.dat)
+	// The image ID 0x06000261 was used for the map - using it for background
+	// If this image doesn't exist, try other IDs like 0x06000001, 0x06001000, etc.
+	m_picCharSelectBackground = new cPictureBox();
+	if (m_Portal) {  // Make sure Portal is initialized
+		m_picCharSelectBackground->SetPicture(0x06000261);  // Background image from DAT files
+	}
+	m_picCharSelectBackground->JumpToBack();  // Put it behind everything
+	AddChild(*m_picCharSelectBackground);
+
 	m_stMOTD = new cStaticText();
 	m_stMOTD->SetTextColor(0xFFFFFF);
 	m_stMOTD->SetText(m_MOTD);
@@ -213,7 +225,8 @@ cInterface::cInterface()
 	{
 		m_stCharList[i] = new cStaticText();
 		m_stCharList[i]->SetTextColor(0xFFFFFF);
-		m_stCharList[i]->SetTextHAlign(eCenter);
+		m_stCharList[i]->SetTextHAlign(eLeft);  // Left align for character list on left side
+		m_stCharList[i]->SetTextSize(16);  // Larger font size for character names (default is 11)
 		m_stCharList[i]->JumpToFront();
 		m_stCharList[i]->AddMouseEventHandler( *(MouseEventsAbstractor< cInterface > *)this );
 		AddChild(*m_stCharList[i]);
@@ -222,6 +235,16 @@ cInterface::cInterface()
 	m_picSelChar = new cPictureBox();
 	m_picSelChar->JumpToBack();
 	m_picSelChar->SetPicture(0x06001125);
+
+	// Create text overlay for ENTER button - make it large and visible
+	m_stEnterButton = new cStaticText();
+	m_stEnterButton->SetText("ENTER");
+	m_stEnterButton->SetTextColor(0xFFD700);  // Gold color - more visible
+	m_stEnterButton->SetTextSize(20);  // Larger font size
+	m_stEnterButton->SetTextHAlign(eCenter);
+	m_stEnterButton->SetTextVAlign(eCenter);
+	m_stEnterButton->JumpToFront();
+	AddChild(*m_stEnterButton);
 	AddChild(*m_picSelChar);
 
 	AddRenderEventHandler( *(RenderEventAbstractor< cInterface > *)this );
@@ -261,6 +284,14 @@ cInterface::~cInterface()
 	delete m_stConnecting;
 	RemoveChild(*m_picEnterGame);
 	delete m_picEnterGame;
+	if (m_stEnterButton) {
+		RemoveChild(*m_stEnterButton);
+		delete m_stEnterButton;
+	}
+	if (m_picCharSelectBackground) {
+		RemoveChild(*m_picCharSelectBackground);
+		delete m_picCharSelectBackground;
+	}
 	RemoveChild(*m_stMOTD);
 	delete m_stMOTD;
 	for (int i=0;i<5;i++)
@@ -430,7 +461,8 @@ int cInterface::Draw(RECT rRect, HDC hDC)
 		glClearColor( 107.0f/255, 178.0f/255, 255.0f/255, 1.0f );
 	}
 
-	if (bAnimUpdate)
+	// Only process movement when in game mode
+	if (m_InterfaceMode == eGame && bAnimUpdate)
 	{
 		bAnimUpdate = false;
 
@@ -459,15 +491,23 @@ int cInterface::Draw(RECT rRect, HDC hDC)
 		}
 	}
 
-	//Default to 2d mode
+	// Set up 2D rendering state for UI (used by both eMOTD and eGame modes)
+	// This ensures UI windows can render properly when OnRender() is called
+	glViewport(0, 0, m_iWidth, m_iHeight);
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
 	glOrtho(0, m_iWidth, m_iHeight, 0, 0.1, 100);
-
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+	glDisable(GL_DEPTH_TEST);
+	glEnable(GL_TEXTURE_2D);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	gluLookAt(0, 0, 50, 0, 0, 0, 0, 1, 0);
 
-	//Render all windows
-	m_WindowManager->OnRender(fTimeDiff);
+	// Render UI windows - window manager will call OnRender() on all windows
+	// This happens for both eMOTD and eGame modes
+	m_WindowManager->OnRender((double)fTimeDiff);
 
 	//2d hacks for now until it's in the windowmanager
 	{
@@ -526,24 +566,31 @@ void cInterface::SetInterfaceMode(eInterfaceMode Mode)
 	case eMOTD:
 		m_pbConnecting->SetVisible(false);
 		m_stConnecting->SetVisible(false);
-//		m_picMap->SetVisible(false);
 		m_mwMinimap->SetVisible(false);
+		m_mwWindowToolbar->SetVisible(false);
 
+		// Only show character list and enter button - nothing else
+		m_picCharSelectBackground->SetVisible(false);  // Hide background image
+		m_stMOTD->SetVisible(false);  // Hide world info for now
 		m_picEnterGame->SetVisible(true);
-		m_stMOTD->SetVisible(true);
 		m_picSelChar->SetVisible(true);
+		m_stEnterButton->SetVisible(true);  // Show ENTER text
 		for (int i=0;i<5;i++)
 			m_stCharList[i]->SetVisible(true);
 		break;
     case eEnteringGame:
+        m_picCharSelectBackground->SetVisible(false);
         m_picEnterGame->SetVisible(false);
+        m_stEnterButton->SetVisible(false);
         m_stMOTD->SetVisible(true);
         m_picSelChar->SetVisible(true);
         for (int i = 0;i < 5;i++)
             m_stCharList[i]->SetVisible(true);
         break;
 	case eGame:
+		m_picCharSelectBackground->SetVisible(false);
 		m_picEnterGame->SetVisible(false);
+		m_stEnterButton->SetVisible(false);
 		m_stMOTD->SetVisible(false);
 		for (int i=0;i<5;i++)
 			m_stCharList[i]->SetVisible(false);
@@ -573,8 +620,18 @@ void cInterface::SetCharList(stCharList *CharList)
 
 	if (m_CharList.CharCount)
 	{
+		// Set character names for all characters in the list
+		for (int i=0;i<m_CharList.CharCount;i++)
+		{
+			char szCharName[64];
+			sprintf(szCharName, "+%s", m_CharList.Chars[i].Name);
+			m_stCharList[i]->SetText(szCharName);
+			m_stCharList[i]->SetTextColor(0xFFFFFF);
+		}
+		
+		// Select first character and highlight it
 		m_dwSelChar = m_CharList.Chars[0].GUID;
-		m_stCharList[0]->SetTextColor(0xFF);
+		m_stCharList[0]->SetTextColor(0x0000FF);  // Blue for selected
 		m_picSelChar->JumpToBack();
 		m_picSelChar->SetPosition(m_stCharList[0]->GetLeft(), m_stCharList[0]->GetTop());
 	}
@@ -934,14 +991,14 @@ bool cInterface::OnMouseDown( IWindow & Window, float X, float Y, unsigned long 
 				m_picSelChar->SetPosition(m_stCharList[i]->GetLeft(), m_stCharList[i]->GetTop());
 				m_dwSelChar = m_CharList.Chars[i].GUID;
 				
+				// Character selection - only update text colors, not models
+				// Models are not loaded at login screen
 				for (int h=0;h<m_CharList.CharCount;h++)
 				{
-					m_mgChars[h]->SetDefaultAnim(0x03000002);
 					m_stCharList[h]->SetTextColor(0xFFFFFF);
 				}
 				m_stCharList[i]->SetTextColor(0x0000FF);
-				m_mgChars[i]->SetDefaultAnim(0);
-				m_mgChars[i]->PlayAnimation( 0x03000853, 0, 0xFFFFFFFF, 30.0f );
+				// NOTE: Character model animations disabled - models not loaded at login
 			}
 		}
 
@@ -1055,35 +1112,39 @@ bool cInterface::OnMouseUp( IWindow & Window, float X, float Y, unsigned long Bu
 
 bool cInterface::OnKeyUp( IWindow & Window, unsigned long KeyCode )
 {
-	if (KeyCode == 'W')
+	// Only process movement keys when in game mode
+	if (m_InterfaceMode == eGame)
 	{
-		bForward = false;
-		bAnimUpdate = true;
-	}
-	if (KeyCode == 'S')
-	{
-		bBack = false;
-		bAnimUpdate = true;
-	}
-	if (KeyCode == 'A')
-	{
-		bLeft = false;
-		bAnimUpdate = true;
-	}
-	if (KeyCode == 'D')
-	{
-		bRight = false;
-		bAnimUpdate = true;
-	}
-	if (KeyCode == 'Z')
-	{
-		bStrLeft = false;
-		bAnimUpdate = true;
-	}
-	if (KeyCode == 'C')
-	{
-		bStrRight = false;
-		bAnimUpdate = true;
+		if (KeyCode == 'W' || KeyCode == VK_UP)
+		{
+			bForward = false;
+			bAnimUpdate = true;
+		}
+		if (KeyCode == 'S' || KeyCode == VK_DOWN)
+		{
+			bBack = false;
+			bAnimUpdate = true;
+		}
+		if (KeyCode == 'A' || KeyCode == VK_LEFT)
+		{
+			bLeft = false;
+			bAnimUpdate = true;
+		}
+		if (KeyCode == 'D' || KeyCode == VK_RIGHT)
+		{
+			bRight = false;
+			bAnimUpdate = true;
+		}
+		if (KeyCode == 'Z')
+		{
+			bStrLeft = false;
+			bAnimUpdate = true;
+		}
+		if (KeyCode == 'C')
+		{
+			bStrRight = false;
+			bAnimUpdate = true;
+		}
 	}
 	if (KeyCode == 'F')
 	{
@@ -1179,7 +1240,7 @@ bool cInterface::OnKeyDown( IWindow & Window, unsigned long KeyCode )
 
 	if (KeyCode == 'W')
 	{
-		if (!bForward)
+		if (m_InterfaceMode == eGame && !bForward)
 		{
 			bForward = true;
 			bAnimUpdate = true;
@@ -1224,7 +1285,7 @@ bool cInterface::OnKeyDown( IWindow & Window, unsigned long KeyCode )
 
 	if (KeyCode == 'A')
 	{
-		if (!bLeft)
+		if (m_InterfaceMode == eGame && !bLeft)
 		{
 			bLeft = true;
 			bAnimUpdate = true;
@@ -1233,7 +1294,7 @@ bool cInterface::OnKeyDown( IWindow & Window, unsigned long KeyCode )
 
 	if (KeyCode == 'D')
 	{
-		if (!bRight)
+		if (m_InterfaceMode == eGame && !bRight)
 		{
 			bRight = true;
 			bAnimUpdate = true;
@@ -1242,7 +1303,7 @@ bool cInterface::OnKeyDown( IWindow & Window, unsigned long KeyCode )
 
 	if (KeyCode == 'Z')
 	{
-		if (!bStrLeft)
+		if (m_InterfaceMode == eGame && !bStrLeft)
 		{
 			bStrLeft = true;
 			bAnimUpdate = true;
@@ -1251,61 +1312,96 @@ bool cInterface::OnKeyDown( IWindow & Window, unsigned long KeyCode )
 
 	if (KeyCode == 'C')
 	{
-		if (!bStrRight)
+		if (m_InterfaceMode == eGame && !bStrRight)
 		{
 			bStrRight = true;
 			bAnimUpdate = true;
 		}
 	}
 
+	// Arrow keys for movement when in game mode, camera control otherwise
 	if (KeyCode == VK_UP)
 	{
-		m_fCamRotY -= (float) M_PI/20;
-		if (m_fCamRotY < 0) m_fCamRotY = 0;
+		if (m_InterfaceMode == eGame)
+		{
+			// Arrow UP = Forward movement
+			if (!bForward)
+			{
+				bForward = true;
+				bAnimUpdate = true;
+			}
+		}
+		else
+		{
+			// Camera tilt up (for non-game modes)
+			m_fCamRotY -= (float) M_PI/20;
+			if (m_fCamRotY < 0) m_fCamRotY = 0;
+		}
 	}
 	if (KeyCode == VK_DOWN)
 	{
-		m_fCamRotY += (float) M_PI/20;
-		if (m_fCamRotY > M_PI) m_fCamRotY = (float) M_PI;
+		if (m_InterfaceMode == eGame)
+		{
+			// Arrow DOWN = Backward movement
+			if (!bBack)
+			{
+				bBack = true;
+				bAnimUpdate = true;
+			}
+		}
+		else
+		{
+			// Camera tilt down (for non-game modes)
+			m_fCamRotY += (float) M_PI/20;
+			if (m_fCamRotY > M_PI) m_fCamRotY = (float) M_PI;
+		}
 	}
 
 	if (KeyCode == VK_LEFT)
 	{
-/*		m_dwBaseTex -= 36;
-		if (m_dwBaseTex < 0) m_dwBaseTex = 0;
-		for (int y=0; y<6; y++)
-			for (int x=0; x<6; x++)
-				m_pbTex[y][x]->SetPicture(dwTexBase | (y*6 + x + m_dwBaseTex));
-*/
-		if (m_InterfaceMode == eConnecting)
+		if (m_InterfaceMode == eGame)
 		{
+			// Arrow LEFT = Turn left
+			if (!bLeft)
+			{
+				bLeft = true;
+				bAnimUpdate = true;
+			}
 		}
-		if (m_InterfaceMode == eMOTD)
+		else
 		{
-			dwAnim--;
-			for (int i=0;i<m_CharList.CharCount;i++)
-				m_mgChars[i]->PlayAnimation(dwAnim, 0, 0xFFFFFFFE, 30.0f),OutputConsoleString( "Playing animation %08x...", dwAnim );
+			// Camera rotation left (for non-game modes)
+			if (m_InterfaceMode == eMOTD)
+			{
+				dwAnim--;
+				for (int i=0;i<m_CharList.CharCount;i++)
+					m_mgChars[i]->PlayAnimation(dwAnim, 0, 0xFFFFFFFE, 30.0f),OutputConsoleString( "Playing animation %08x...", dwAnim );
+			}
+			m_fCamRotX -= (float) M_PI/20;
 		}
-		m_fCamRotX -= (float) M_PI/20;
 	}
 	if (KeyCode == VK_RIGHT)
 	{
-/*		m_dwBaseTex += 36;
-		if (m_dwBaseTex < 0) m_dwBaseTex = 0;
-		for (int y=0; y<6; y++)
-			for (int x=0; x<6; x++)
-				m_pbTex[y][x]->SetPicture(dwTexBase | (y*6 + x + m_dwBaseTex));
-*/
-		if (m_InterfaceMode == eConnecting)
+		if (m_InterfaceMode == eGame)
 		{
+			// Arrow RIGHT = Turn right
+			if (!bRight)
+			{
+				bRight = true;
+				bAnimUpdate = true;
+			}
 		}
-		if (m_InterfaceMode == eMOTD)
+		else
 		{
-			dwAnim++;
-			for (int i=0;i<m_CharList.CharCount;i++)
-				m_mgChars[i]->PlayAnimation(dwAnim, 0, 0xFFFFFFFE, 30.0f),OutputConsoleString( "Playing animation %08x...", dwAnim );
+			// Camera rotation right (for non-game modes)
+			if (m_InterfaceMode == eMOTD)
+			{
+				dwAnim++;
+				for (int i=0;i<m_CharList.CharCount;i++)
+					m_mgChars[i]->PlayAnimation(dwAnim, 0, 0xFFFFFFFE, 30.0f),OutputConsoleString( "Playing animation %08x...", dwAnim );
+			}
+			m_fCamRotX += (float) M_PI/20;
 		}
-		m_fCamRotX += (float) M_PI/20;
 	}
 
 	if (KeyCode == VK_ADD)
@@ -1317,9 +1413,48 @@ bool cInterface::OnKeyDown( IWindow & Window, unsigned long KeyCode )
 		m_fCamDist *= 1.1f;
 	}
 
-	if ((KeyCode == VK_NUMPAD0) || (KeyCode == VK_INSERT))
+	// Numpad camera controls
+	if (KeyCode == VK_NUMPAD0)
 	{
-		//reset to defs
+		// Reset camera to defaults
+		m_fCamDist = 0.018f;
+		m_fCamRotX = 0;
+		m_fCamRotY = (float) M_PI/3;
+	}
+	if (KeyCode == VK_NUMPAD2)
+	{
+		// Tilt camera down
+		m_fCamRotY += (float) M_PI/20;
+		if (m_fCamRotY > M_PI) m_fCamRotY = (float) M_PI;
+	}
+	if (KeyCode == VK_NUMPAD8)
+	{
+		// Tilt camera up
+		m_fCamRotY -= (float) M_PI/20;
+		if (m_fCamRotY < 0) m_fCamRotY = 0;
+	}
+	if (KeyCode == VK_NUMPAD4)
+	{
+		// Rotate camera left
+		m_fCamRotX -= (float) M_PI/20;
+	}
+	if (KeyCode == VK_NUMPAD6)
+	{
+		// Rotate camera right
+		m_fCamRotX += (float) M_PI/20;
+	}
+	if (KeyCode == VK_RETURN && m_InterfaceMode == eGame)
+	{
+		// Numpad Enter: Birds eye view (top-down camera)
+		// Set camera to look straight down from above
+		m_fCamRotY = 0;  // Look straight down
+		m_fCamDist = 0.1f;  // Higher distance for birds eye view
+		m_fCamRotX = 0;  // Reset horizontal rotation
+	}
+	
+	if (KeyCode == VK_INSERT)
+	{
+		// Reset camera to defaults (alternative to numpad 0)
 		m_fCamDist = 0.018f;
 		m_fCamRotX = 0;
 		m_fCamRotY = (float) M_PI/3;
@@ -1344,26 +1479,53 @@ void cInterface::Resize(int iWidth, int iHeight)
 	m_stConnecting->SetSize(0.8f*iWidth, 0.03f*iHeight);
 	m_stConnecting->SetPosition(0.1f*iWidth, (0.75f+0.03f)*iHeight);
 
-	m_picEnterGame->SetSize(iWidth/4.0f, iHeight/4.0f);
-	m_picEnterGame->SetPosition(3*iWidth/4.0f, iHeight/2.0f+20);
+	// Position ENTER button prominently in center-bottom area
+	// Make it large and clearly visible
+	float buttonWidth = iWidth * 0.25f;  // 25% of screen width - larger
+	float buttonHeight = iHeight * 0.12f;  // 12% of screen height - larger
+	m_picEnterGame->SetSize(buttonWidth, buttonHeight);
+	m_picEnterGame->SetPosition(iWidth/2.0f - buttonWidth/2.0f, iHeight*0.75f);  // Center horizontally, 75% down (more visible)
+	
+	// Position ENTER text overlay centered on button - make it very visible
+	if (m_stEnterButton) {
+		m_stEnterButton->SetSize(buttonWidth, buttonHeight);
+		m_stEnterButton->SetPosition(iWidth/2.0f - buttonWidth/2.0f, iHeight*0.75f);
+		// Ensure text is large and prominent
+		m_stEnterButton->SetTextSize(24);  // Even larger font
+		m_stEnterButton->SetTextColor(0xFFD700);  // Gold color
+	}
 
 //	m_picMap->SetSize(1*iWidth/2.0f, 1*iHeight/2.0f);
 //	m_picMap->SetPosition(2*iWidth/8.0f, 1*iHeight/8.0f);
 
-	m_stMOTD->SetSize(3*iWidth/4-10.0f, iHeight/2-30.0f);
-	m_stMOTD->SetPosition(10, iHeight/2+30.0f);
+	// Character selection screen layout (inspired by reference screenshot)
+	// Background image - full screen
+	if (m_picCharSelectBackground) {
+		m_picCharSelectBackground->SetSize((float)iWidth, (float)iHeight);
+		m_picCharSelectBackground->SetPosition(0, 0);
+	}
+	
+	// World info at top-left
+	m_stMOTD->SetSize(300.0f, 30.0f);
+	m_stMOTD->SetPosition(20.0f, 50.0f);
 
+	// Character list - vertical on the left side (like reference screenshot)
+	float fCharListX = 20.0f;  // Left margin
+	float fCharListY = 120.0f; // Below world name area
+	float fCharListWidth = 250.0f;  // Width for character list
+	float fCharListHeight = 35.0f;  // Height per character - increased for larger text
+	
 	for (int i=0;i<5;i++)
 	{
-		m_stCharList[i]->SetSize(iWidth/5.0f, 15.0f);
-		m_stCharList[i]->SetPosition(iWidth*i/5.0f, iHeight/2.0f);
+		m_stCharList[i]->SetSize(fCharListWidth, fCharListHeight);
+		m_stCharList[i]->SetPosition(fCharListX, fCharListY + i * (fCharListHeight + 5.0f));
 	
 		if (i < m_CharList.CharCount)
 			if (m_dwSelChar == m_CharList.Chars[i].GUID)
 				m_picSelChar->SetPosition(m_stCharList[i]->GetLeft(), m_stCharList[i]->GetTop());
 	}
 
-	m_picSelChar->SetSize(iWidth/5.0f, 15);
+	m_picSelChar->SetSize(fCharListWidth, fCharListHeight);
 
 	m_mwSpellBar->SetSize((float)0.9f*iWidth, 16+32+16);
 	m_mwSpellBar->SetPosition(0.05f*iWidth, iHeight-64);
@@ -1404,6 +1566,13 @@ void cInterface::Resize(int iWidth, int iHeight)
 
 bool cInterface::OnRender( IWindow & Window, double TimeSlice )
 {
+	// For character select screen, do nothing - state is already set up in Draw()
+	// Window manager will render child windows after this returns
+	if (m_InterfaceMode == eMOTD)
+	{
+		return true;  // Early return - UI windows will be rendered by window manager
+	}
+
 	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	if (m_InterfaceMode == eConnecting)
 	{
@@ -1595,112 +1764,52 @@ bool cInterface::OnRender( IWindow & Window, double TimeSlice )
 		glOrtho(0, m_iWidth, m_iHeight, 0, 0.1, 100);
 		gluLookAt(0, 0, 50, 0, 0, 0, 0, 1, 0);
 	}
-	if (m_InterfaceMode == eMOTD)
+	else if (m_InterfaceMode == eMOTD)
 	{
+		// Character selection screen - only show character names, not models
+		// Character models will be loaded when entering world (via 0xF745 messages)
 		if ((m_CharList.CharCount) && (!m_mgChars[0]))
 		{
 			for (int i=0;i<m_CharList.CharCount;i++)
 			{
-				m_stCharList[i]->SetText(m_CharList.Chars[i].Name);
-
-				//now load model cache
-				std::vector<stModelSwap> mod; mod.clear();
-				std::vector<stTextureSwap> tex; tex.clear();
-				std::vector<stPaletteSwap> pal; pal.clear();
-
-				char tpfn[80];
-				size_t iCount = 0;
-				sprintf(tpfn, "%08X.charcache", m_CharList.Chars[i].GUID);
-				FILE *tpo = fopen(tpfn, "rb");
-				if (tpo != NULL)
-				{
-					fread(&iCount, 4, 1, tpo);
-
-					for (DWORD i=0;i<iCount;i++)
-					{
-						stModelSwap tpm;
-						fread(&tpm, sizeof(stModelSwap), 1, tpo);
-						mod.push_back(tpm);
-					}
-					
-					fread(&iCount, 4, 1, tpo);
-					for (DWORD i=0;i<iCount;i++)
-					{
-						stTextureSwap tpm;
-						fread(&tpm, sizeof(stTextureSwap), 1, tpo);
-						tex.push_back(tpm);
-					}
-					
-					fread(&iCount, 4, 1, tpo);
-					for (DWORD i=0;i<iCount;i++)
-					{
-						stPaletteSwap tpm;
-						fread(&tpm, sizeof(stPaletteSwap), 1, tpo);
-						pal.push_back(tpm);
-					}
-
-					fclose(tpo);
-				}
-				m_mgChars[i] = new cModelGroup();
-				m_mgChars[i]->ReadModel(0x02000001, &pal, &tex, &mod);
-				m_mgChars[i]->SetRotation(0, 0, 0, 0);
-				m_mgChars[i]->SetTranslation(cPoint3D(2.0f-i, 0, 0));
-				m_mgChars[i]->SetScale(1.0f);
-				m_mgChars[i]->SetDefaultAnim(0x03000002);
-				m_mgChars[i]->UpdateAnim((float) rand()/RAND_MAX);
+				// Set character names for display with + prefix (like reference screenshot)
+				char szCharName[64];
+				sprintf(szCharName, "+%s", m_CharList.Chars[i].Name);
+				m_stCharList[i]->SetText(szCharName);
+				m_stCharList[i]->SetTextColor(0xFFFFFF);
 			}
-
-			for (int h=0;h<m_CharList.CharCount;h++)
+			// Highlight first character
+			if (m_CharList.CharCount > 0)
 			{
-//				m_mgChars[h]->SetDefaultAnim(0x03000002);
-				m_stCharList[h]->SetTextColor(0xFFFFFF);
+				m_stCharList[0]->SetTextColor(0x0000FF);
 			}
-			m_stCharList[0]->SetTextColor(0x0000FF);
-			m_mgChars[0]->SetDefaultAnim(0);
-			m_mgChars[0]->PlayAnimation( 0x03000853, 0, 0xFFFFFFFF, 30.0f );
 
-			for (int i=0;i<5;i++)
-			{
-				m_mgPlatforms[i] = new cModelGroup();
-				m_mgPlatforms[i]->ReadModel(0x02000117);
-				m_mgPlatforms[i]->SetRotation(0, 0, 0, 0);
-				m_mgPlatforms[i]->SetTranslation(cPoint3D(2.00f-i, 0, -0.15f));
-				m_mgPlatforms[i]->SetScale(0.25f);
-			}
+			// NOTE: Character models are NOT loaded at login screen
+			// They will be created when entering world via 0xF745 (create object) messages
+			// This matches ACEmulator behavior - server doesn't send character appearance at login
 		}
 
-		glEnable(GL_DEPTH_TEST);
-		glMatrixMode(GL_PROJECTION);
-		glLoadIdentity();
-//		gluPerspective(180,(float)m_iWidth/(m_iHeight/2), 0.001, 100);
-		glOrtho(-2.5f, 2.5f, -1.0f, 1.05f, 0.001, 100);
-		gluLookAt(0, 1.5f, 0.85f, 0, 0, 0.85f, 0, 0, 1);
-		glViewport(0, m_iHeight/2, m_iWidth, m_iHeight/2);
-
-		for (int i=0;i<m_CharList.CharCount;i++)
-		{
-			m_mgChars[i]->UpdateAnim((float) TimeSlice);
-			m_mgChars[i]->Draw();
-		}
-
-		for (int i=0;i<5;i++)
-			m_mgPlatforms[i]->Draw();
-
-		glViewport(0, 0, m_iWidth, m_iHeight);
-		gluPerspective(90,(float)m_iWidth/m_iHeight, 0.001, 100);
-		glDisable(GL_DEPTH_TEST);
-		glMatrixMode(GL_PROJECTION);
-		glLoadIdentity();
-		glOrtho(0, m_iWidth, m_iHeight, 0, 0.1, 100);
-		gluLookAt(0, 0, 50, 0, 0, 0, 0, 1, 0);
+		// Character select screen - OpenGL state is already set up in Draw()
+		// Just return - window manager will render UI windows
+		return true;  // Early return - no 3D rendering needed
 	}
-	if (m_InterfaceMode == eGame)
+	else if (m_InterfaceMode == eGame)
 	{
+		// Ensure proper OpenGL state for game rendering
+		// Reset all state that might have been modified by character select screen
+		glViewport(0, 0, m_iWidth, m_iHeight);  // Reset viewport to full screen
 		glEnable(GL_DEPTH_TEST);
+		glEnable(GL_TEXTURE_2D);  // Ensure textures are enabled
+		glColor3f(1.0f, 1.0f, 1.0f);  // Reset color to white
+		
 		//Now for 3d shit (if any)
 		glMatrixMode(GL_PROJECTION);
 		glLoadIdentity();
 		gluPerspective(90,(float)m_iWidth/m_iHeight, 0.001, 100);
+		
+		// Reset modelview matrix
+		glMatrixMode(GL_MODELVIEW);
+		glLoadIdentity();
 
 		cWObject *woMyself = m_ObjectDB->FindObject(m_dwSelChar);
 		cPoint3D MyPos;
@@ -1845,13 +1954,21 @@ bool cInterface::OnRender( IWindow & Window, double TimeSlice )
 		glRasterPos3f(MyPos.x, MyPos.y-0.01f, MyPos.z);
 		glCallLists(1, GL_UNSIGNED_BYTE, "S");
 
-		//Back to 2D
+		//Back to 2D for UI overlay
 		glDisable(GL_DEPTH_TEST);
 		glMatrixMode(GL_PROJECTION);
 		glLoadIdentity();
 		glOrtho(0, m_iWidth, m_iHeight, 0, 0.1, 100);
+		glMatrixMode(GL_MODELVIEW);
+		glLoadIdentity();
 		gluLookAt(0, 0, 50, 0, 0, 0, 0, 1, 0);
 	}
+	
+	// NOTE: Do NOT call m_WindowManager->OnRender() here!
+	// The window manager is already called from Draw(), and calling it here
+	// would cause infinite recursion (Draw() -> WindowManager -> OnRender() -> WindowManager -> ...)
+	// UI windows will be rendered by the window manager after this function returns
+	
 	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
 	return true;

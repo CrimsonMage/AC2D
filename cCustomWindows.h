@@ -1185,8 +1185,15 @@ private:
 			char tpstr[50];
 			sprintf(tpstr, "%i/%i", tpVital->dwCurrent, tpVital->dwBuffed);
 			m_stVitals[(i >> 1) - 1].SetText(tpstr);
-			m_pbVitals[(i >> 1) - 1].SetLimits(0, (float) tpVital->dwBuffed);
-			m_pbVitals[(i >> 1) - 1].SetCurrent((float) tpVital->dwCurrent);
+			
+			// Clamp current value to not exceed maximum to prevent bar from exceeding bounds
+			float fMax = (float) tpVital->dwBuffed;
+			float fCurrent = (float) tpVital->dwCurrent;
+			if (fCurrent > fMax) fCurrent = fMax;  // Clamp to maximum
+			if (fMax <= 0) fMax = 1.0f;  // Prevent division by zero
+			
+			m_pbVitals[(i >> 1) - 1].SetLimits(0, fMax);
+			m_pbVitals[(i >> 1) - 1].SetCurrent(fCurrent);
 		}
 
 		return true;

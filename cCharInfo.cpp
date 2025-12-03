@@ -66,6 +66,12 @@ void cCharInfo::LoadSpellsTable()
 {
 	//Parse Spell Table
 	cPortalFile *PF = m_Portal->OpenEntry(0x0E00000E);
+	if (!PF)
+	{
+		// DAT file entry not found - spell table unavailable, but continue without it
+		// This allows the client to run even if DAT files are incomplete
+		return;
+	}
 	cByteStream *BS = new cByteStream(PF->data, PF->length);
 
 	BS->ReadBegin();
@@ -157,8 +163,13 @@ void cCharInfo::LoadSpellsTable()
 
 void cCharInfo::LoadSkillsTable()
 {
-	//Parse Spell Table
+	//Parse Skills Table
 	cPortalFile *PF = m_Portal->OpenEntry(0x0E000004);
+	if (!PF)
+	{
+		// DAT file entry not found - skills table unavailable, but continue without it
+		return;
+	}
 	cByteStream *BS = new cByteStream(PF->data, PF->length);
 
 	BS->ReadBegin();

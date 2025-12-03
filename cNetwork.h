@@ -21,11 +21,22 @@ const float max_sidestep_anim_rate	= 3.0f;
 #define SF_CONNECTED (1 << 0)
 #define SF_CRCSEEDS (1 << 2)
 
+// Session state machine (inspired by bzr)
+enum SessionState
+{
+    kSessionLogon,          // Initial connection attempt
+    kSessionReferred,       // Server referral received
+    kSessionConnectResponse, // Waiting for connection confirmation
+    kSessionConnected       // Fully connected
+};
+
 // timeout and interval settings
 // Connection attempt timeout
 #define TIMEOUT_MS  1000
 // Interval between ack messages sent by us
 #define ACK_INTERVAL_MS 2000
+// Interval for heartbeat packets to prevent disconnection (especially on login screen)
+#define HEARTBEAT_INTERVAL_MS 5000
 
 //enum OptionalHeaderFlags
 //{
@@ -104,10 +115,20 @@ struct stServerInfo {
 	DWORD	m_dwLastPing;
 	DWORD	m_dwLastSyncSent;
 	DWORD	m_dwLastSyncRecv;
+	DWORD	m_dwLastHeartbeat;  // For periodic heartbeat to prevent timeout
 	double	m_flServerTime; //At our last sync, this was the server's time
 
 	//Flags to determine our status/phase
 	DWORD	m_dwFlags;
+
+    // Session state machine (explicit state tracking)
+    SessionState m_eState;
+
+    // Better sequence tracking (inspired by bzr)
+    // Latest contiguous sequence received from server
+    DWORD m_dwServerLeadingSequence;
+    // Latest contiguous sequence sent by client
+    DWORD m_dwClientLeadingSequence;
 
     // the rng used to generate xor values for server packets
     ChecksumXorGenerator *serverXorGen;
