@@ -320,28 +320,45 @@ public:
 		for (int i=0; i<6; i++)
 		{
 			stStatInfo *SI = m_CharInfo->GetStat(i+1);
+			if (!SI)
+				continue;
 
 			m_pbIcons[i].SetPicture(SI->dwIcon);
 
-			m_stNames[i].SetText(SI->szName);
+			// Set stat name - ensure string is valid
+			if (!SI->szName.empty())
+				m_stNames[i].SetText(SI->szName);
+			else
+				m_stNames[i].SetText("");
 		}
 
 		for (int i=0; i<3; i++)
 		{
 			stSecStatInfo *SI = m_CharInfo->GetSecStat((i+1) << 1);
+			if (!SI)
+				continue;
 
 			m_pbIcons[i+6].SetPicture(SI->dwIcon);
 
-			m_stNames[i+6].SetText(SI->szName);
+			// Set secondary stat name - ensure string is valid
+			if (!SI->szName.empty())
+				m_stNames[i+6].SetText(SI->szName);
+			else
+				m_stNames[i+6].SetText("");
 		}
 	}
 	bool RenderEventAbstractor< cStatWindow >::OnRender( IWindow & Window, double TimeSlice )
 	{
+		if (!m_CharInfo)
+			return true;
+
 		char textBuffer[64]; // XXX: this can be slimmed down to whatever the longest possible representation is from itoa
 
 		for (int i=0; i<6; i++)
 		{
 			stStatInfo *SI = m_CharInfo->GetStat(i+1);
+			if (!SI)
+				continue;
 
 			m_stVals[i].SetText(itoa(SI->dwBuffed, textBuffer, 10));
 			m_stVals[i].SetTextColor((SI->dwBase != SI->dwBuffed) ? 0xFF6060 : 0xFFFFFF);
@@ -350,8 +367,13 @@ public:
 		for (int i=0; i<3; i++)
 		{
 			stSecStatInfo *SI = m_CharInfo->GetSecStat((i+1) << 1);
+			if (!SI)
+				continue;
 
-			m_stVals[i+6].SetText(itoa(SI->dwBuffed, textBuffer, 10));
+			// Use the same maximum calculation as the vitals window
+			// Maximum should be the higher of current or buffed (current represents actual max when at full)
+			DWORD dwMax = (SI->dwCurrent > SI->dwBuffed) ? SI->dwCurrent : SI->dwBuffed;
+			m_stVals[i+6].SetText(itoa(dwMax, textBuffer, 10));
 			m_stVals[i+6].SetTextColor((SI->dwBase != SI->dwBuffed) ? 0xFF6060 : 0xFFFFFF);
 		}
 
@@ -1146,9 +1168,9 @@ public:
 			m_stVitals[i].SetTextHAlign(eCenter);
 			m_pbVitals[i].AddChild(m_stVitals[i]);
 		}
-		m_pbVitals[0].SetColor(0x0000FF);
-		m_pbVitals[1].SetColor(0x10F0F0);
-		m_pbVitals[2].SetColor(0xFF0000);
+		m_pbVitals[0].SetColor(0x0000FF);  // Blue - Mana
+		m_pbVitals[1].SetColor(0x00AAAA);  // Darker yellow/cyan - Stamina (darker for better readability)
+		m_pbVitals[2].SetColor(0xFF0000);  // Red - Health
 
 		AddResizeEventHandler( *(ResizeEventAbstractor< cVitalsWindow > *)this );
 		AddRenderEventHandler( *(RenderEventAbstractor< cVitalsWindow > *)this );
@@ -1177,16 +1199,34 @@ private:
 	}
 	bool RenderEventAbstractor< cVitalsWindow >::OnRender( IWindow & Window, double TimeSlice )
 	{
+		if (!m_CharInfo)
+			return true;
+
 		//update stats
 		for (int i=2;i<=6;i+=2)
 		{
 			stSecStatInfo *tpVital = m_CharInfo->GetSecStat(i);
+			if (!tpVital)
+				continue;
 
-			char tpstr[50];
-			sprintf(tpstr, "%i/%i", tpVital->dwCurrent, tpVital->dwBuffed);
+			// Format large numbers - increase buffer size to handle large numbers
+			char tpstr[64];
+			
+			// Maximum should be the higher of current or buffed (current represents actual max when at full)
+			DWORD dwMax = (tpVital->dwCurrent > tpVital->dwBuffed) ? tpVital->dwCurrent : tpVital->dwBuffed;
+			
+			// Use %lu for unsigned long to handle large values properly
+			sprintf(tpstr, "%lu/%lu", (unsigned long)tpVital->dwCurrent, (unsigned long)dwMax);
 			m_stVitals[(i >> 1) - 1].SetText(tpstr);
-			m_pbVitals[(i >> 1) - 1].SetLimits(0, (float) tpVital->dwBuffed);
-			m_pbVitals[(i >> 1) - 1].SetCurrent((float) tpVital->dwCurrent);
+			
+			// Use the calculated maximum for the progress bar
+			float fMax = (float) dwMax;
+			float fCurrent = (float) tpVital->dwCurrent;
+			if (fCurrent > fMax) fCurrent = fMax;  // Clamp to maximum
+			if (fMax <= 0) fMax = 1.0f;  // Prevent division by zero
+			
+			m_pbVitals[(i >> 1) - 1].SetLimits(0, fMax);
+			m_pbVitals[(i >> 1) - 1].SetCurrent(fCurrent);
 		}
 
 		return true;
